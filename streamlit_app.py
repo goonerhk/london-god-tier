@@ -3,6 +3,7 @@ import pandas as pd
 import pytz
 from datetime import datetime, time
 from twelvedata import TDClient
+import time
 
 st.set_page_config(page_title="LONDON GOD TIER", layout="wide")
 
@@ -10,14 +11,14 @@ st.set_page_config(page_title="LONDON GOD TIER", layout="wide")
 try:
     API_KEY = st.secrets["TWELVE_DATA_KEY"]
 except:
-    API_KEY = st.text_input("Enter your Twelve Data API key", type="password")
+    API_KEY = st.text_input("Enter Twelve Data API key", type="password")
     if not API_KEY:
         st.error("API key required")
         st.stop()
 
 td = TDClient(apikey=API_KEY)
 
-# ========================= ASSETS & CORRECT INTERVALS =========================
+# ========================= ASSETS & INTERVALS =========================
 ASSETS = [
     "EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","USD/CAD","NZD/USD",
     "EUR/GBP","EUR/JPY","EUR/CHF","EUR/AUD","EUR/CAD","EUR/NZD",
@@ -26,13 +27,7 @@ ASSETS = [
     "CAD/JPY","CAD/CHF","CHF/JPY","NZD/JPY","NZD/CHF"
 ]
 
-TIMEFRAMES = {
-    '1D': '1day',
-    '1h': '60min',
-    '5m': '5min',
-    '4h': '240min'
-}
-
+TIMEFRAMES = {'1D': '1day', '1h': '1h', '5m': '5min', '4h': '4h'}
 HKT = pytz.timezone('Asia/Hong_Kong')
 
 # ========================= FUNCTIONS =========================
@@ -83,7 +78,7 @@ def get_fvg(df):
     if last['high'] < two['low']: return "Bearish FVG Confirmed"
     return ""
 
-# ========================= FETCH DATA =========================
+# ========================= FIXED FETCH (SAFE COLUMN HANDLING + RATE LIMIT) =========================
 @st.cache_data(ttl=1800, show_spinner="Loading 27 pairs...")
 def fetch_all():
     all_data = {}
@@ -91,21 +86,35 @@ def fetch_all():
         data = {}
         for tf, interval in TIMEFRAMES.items():
             try:
+                time.sleep(1)  # Rate limit: 1 call/second (free plan safe)
                 ts = td.time_series(
                     symbol=asset,
                     interval=interval,
-                    outputsize=300,
+                    outputsize=200,
                     timezone="America/New_York"
                 ).as_pandas()
+                
+                # FIXED: Safe column renaming (handles 5 or 6 columns)
                 ts = ts.reset_index()
-                ts.columns = ['datetime','open','high','low','close','volume']
+                original_cols = ts.columns.tolist()
+                if len(original_cols) == 5:
+                    ts.columns = ['datetime', 'open', 'high', 'low', 'close']
+                    ts['volume'] = 0  # Add missing volume
+                elif len(original_cols) == 6:
+                    ts.columns = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+                else:
+                    st.warning(f"Unexpected columns for {asset} {tf}: {len(original_cols)}")
+                    continue
+                
                 ts['datetime'] = pd.to_datetime(ts['datetime'])
                 ts['date_ny'] = ts['datetime'].dt.date
                 ts['time_ny'] = ts['datetime'].dt.time
                 ts['session'] = ts['time_ny'].apply(get_session)
                 data[tf] = ts
+                st.success(f"{asset} {tf} loaded")
             except Exception as e:
-                st.warning(f"{asset} {tf} failed: {e}")
+                st.warning(f"{asset} {tf}: {e}")
+                time.sleep(60)  # Wait 1 min on error
         if data: all_data[asset] = data
     return all_data
 
@@ -132,7 +141,7 @@ for asset, tfs in data.items():
     ideal_asian = "Delayed Protraction" if asian_pips > 40 else "Ideal" if 20 <= asian_pips <= 30 else ""
 
     prior = round((dfd.iloc[-2]['high'] - dfd.iloc[-2]['low']) * mult, 1) if len(dfd) >= 2 else 0
-    adr5 = round(dfd.tail(6).head(5)['high'].sub(dfd.tail(6).head(5)['low']).mean() * mult, 1)
+    adr5 = round(dfd.tail(6).head(5)['high'].sub(dfd.tail(6).head(5)['low']).mean() * mult, 1) if len(dfd) >= 6 else 0
 
     pattern = detect_prior_day_pattern(dfd.tail(10))
     trend = get_daily_trend(dfd.tail(30))
@@ -161,14 +170,20 @@ for asset, tfs in data.items():
     })
 
 if not rows:
-    st.error("No data — check API key")
+    st.error("No data loaded — check API key or try refresh")
     st.stop()
 
 df = pd.DataFrame(rows)
 
-# Fixed sorting
-df["sort"] = df["Asset"].map(lambda x: priority.index(x) if x in priority else 999)
-df = df.sort_values("sort").drop("sort", axis=1).reset_index(drop=True)
+# FIXED SORTING — NO ERRORS
+def get_priority(x):
+    for i, p in enumerate(priority):
+        if p in x:
+            return i
+    return len(priority) + 1  # Alphabetical fallback
+
+df["priority"] = df["Asset"].apply(get_priority)
+df = df.sort_values("priority").drop("priority", axis=1).reset_index(drop=True)
 
 # ========================= DISPLAY =========================
 st.title("LONDON GOD TIER DASHBOARD")
@@ -184,4 +199,4 @@ def color(val):
 styled = df.style.map(color)
 st.dataframe(styled, use_container_width=True, height=1000)
 
-st.success("Full Dashboard · CBDR · Asian · FVG · OB · Arrows · Live · Hong Kong")
+st.success("Full Dashboard · CBDR · Asian · FVG · OB · Arrows · Live · Free Plan Safe")
