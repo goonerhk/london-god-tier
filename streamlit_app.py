@@ -12,7 +12,7 @@ try:
 except:
     API_KEY = st.text_input("Enter Twelve Data API key", type="password")
     if not API_KEY:
-        st.error("API key required")
+        st.error("API key required to load data")
         st.stop()
 
 td = TDClient(apikey=API_KEY)
@@ -78,7 +78,7 @@ def get_fvg(df):
     return ""
 
 # ========================= FETCH DATA =========================
-@st.cache_data(ttl=1800, show_spinner="Loading 27 pairs...")
+@st.cache_data(ttl=1800, show_spinner="Fetching 27 pairs from Twelve Data...")
 def fetch_all():
     all_data = {}
     for asset in ASSETS:
@@ -93,15 +93,20 @@ def fetch_all():
                 ts['time_ny'] = ts['datetime'].dt.time
                 ts['session'] = ts['time_ny'].apply(get_session)
                 data[tf] = ts
-            except: continue
+            except Exception as e:
+                st.warning(f"{asset} {tf} failed")
+                continue
         if data: all_data[asset] = data
     return all_data
 
 data = fetch_all()
 
-# ========================= BUILD TABLE =========================
+# ========================= BUILD DASHBOARD =========================
+st.title("LONDON GOD TIER DASHBOARD")
+st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')}")
+
 rows = []
-priority_order = ["EURUSD","GBPUSD","AUDUSD","NZDUSD","USDJPY","USDCAD","USDCHF"]
+priority = ["EURUSD","GBPUSD","AUDUSD","NZDUSD","USDJPY","USDCAD","USDCHF"]
 
 for asset, tfs in data.items():
     if '1D' not in tfs or '5m' not in tfs: continue
@@ -113,14 +118,14 @@ for asset, tfs in data.items():
     cbdr = df5[(df5['date_ny']==today) & (df5['session']=='CBDR')]
     asian = df5[(df5['date_ny']==today) & (df5['session']=='Asian')]
 
-    cbdr_pips = round((cbdr['high'].max()-cbdr['low'].min())*mult,1) if not cbdr.empty else 0
-    asian_pips = round((asian['high'].max()-asian['low'].min())*mult,1) if not asian.empty else 0
+    cbdr_pips = round((cbdr['high'].max() - cbdr['low'].min()) * mult, 1) if not cbdr.empty else 0
+    asian_pips = round((asian['high'].max() - asian['low'].min()) * mult, 1) if not asian.empty else 0
 
     ideal_cbdr = "Ideal" if cbdr_pips < 40 else ""
-    ideal_asian = "Delayed Protraction" if asian_pips > 40 else "Ideal" if 20<=asian_pips<=30 else ""
+    ideal_asian = "Delayed Protraction" if asian_pips > 40 else "Ideal" if 20 <= asian_pips <= 30 else ""
 
-    prior = round((dfd.iloc[-2]['high']-dfd.iloc[-2]['low'])*mult,1) if len(dfd)>=2 else 0
-    adr5 = round(dfd.tail(6).head(5)['high'].sub(dfd.tail(6).head(5)['low']).mean()*mult,1)
+    prior = round((dfd.iloc[-2]['high'] - dfd.iloc[-2]['low']) * mult, 1) if len(dfd) >= 2 else 0
+    adr5 = round(dfd.tail(6).head(5)['high'].sub(dfd.tail(6).head(5)['low']).mean() * mult, 1)
 
     pattern = detect_prior_day_pattern(dfd.tail(10))
     trend = get_daily_trend(dfd.tail(30))
@@ -129,10 +134,10 @@ for asset, tfs in data.items():
     fvg = get_fvg(dfd.tail(10))
     fourh_cc = get_candle_confirmation(df4h.tail(10)) if not df4h.empty else ""
 
-    arrows = "".join("Up" if r['close']>=r['open'] else "Down" for _,r in dfd.tail(3).iterrows())
+    arrows = "".join("Up" if r['close'] >= r['open'] else "Down" for _, r in dfd.tail(3).iterrows())
 
     rows.append({
-        "Asset": asset.replace("/",""),
+        "Asset": asset.replace("/", ""),
         "CBDR": cbdr_pips,
         "Ideal CBDR": ideal_cbdr,
         "Asian": asian_pips,
@@ -148,27 +153,26 @@ for asset, tfs in data.items():
         "Last 3D": arrows,
     })
 
+# FIXED: Only create DataFrame if rows exist
+if not rows:
+    st.error("No data loaded — check API key or internet")
+    st.stop()
+
 df = pd.DataFrame(rows)
 
-# FIXED SORTING
-def sort_priority(x):
-    return x.map(lambda a: priority_order.index(a) if a in priority_order else 999)
+# FIXED SORTING — 100% safe
+df["priority"] = df["Asset"].apply(lambda x: priority.index(x) if x in priority else 999)
+df = df.sort_values("priority").drop("priority", axis=1).reset_index(drop=True)
 
-df["sort"] = df["Asset"].apply(sort_priority)
-df = df.sort_values("sort").drop("sort", axis=1)
-
-# ========================= DISPLAY =========================
-st.title("LONDON GOD TIER DASHBOARD")
-st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')}")
-
-def color(val):
+# ========================= STYLING =========================
+def color_cell(val):
     if "Bullish" in str(val): return "color: #00FF00; font-weight: bold"
     if "Bearish" in str(val): return "color: #FF4444; font-weight: bold"
-    if val == "Ideal": return "color: #00FF88"
+    if val == "Ideal": return "color: #00FF88; font-weight: bold"
     if "Delayed" in str(val): return "color: #FFAA00"
     return ""
 
-styled = df.style.map(color)
+styled = df.style.map(color_cell)
 st.dataframe(styled, use_container_width=True, height=900)
 
-st.success("27 Pairs · Full Dashboard · Refreshes 06:05, 07:05, 11:05, 13:05, 15:05, 19:05 HKT")
+st.success("27 Pairs · Full London God Tier · Live · Hong Kong Time")
