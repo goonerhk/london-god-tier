@@ -4,33 +4,32 @@ import pytz
 from datetime import datetime, time
 from twelvedata import TDClient
 
-st.set_page_config(page_title="LONDON GOD TIER", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="LONDON GOD TIER", layout="wide")
 
-# ========================= SAFE API KEY LOADING =========================
+# ========================= SAFE API KEY =========================
 try:
     API_KEY = st.secrets["TWELVE_DATA_KEY"]
 except:
-    API_KEY = st.text_input("Enter your Twelve Data API key to start", type="password")
+    API_KEY = st.text_input("Enter Twelve Data API key", type="password")
     if not API_KEY:
-        st.error("API key required — paste it above and press Enter")
+        st.error("API key required")
         st.stop()
 
 td = TDClient(apikey=API_KEY)
 
-# ========================= ASSETS & TIMEFRAMES =========================
+# ========================= ASSETS =========================
 ASSETS = [
     "EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","USD/CAD","NZD/USD",
     "EUR/GBP","EUR/JPY","EUR/CHF","EUR/AUD","EUR/CAD","EUR/NZD",
     "GBP/JPY","GBP/CHF","GBP/AUD","GBP/CAD","GBP/NZD",
-    "AUD/JPY","AUD/CH","AUD/CAD","AUD/NZD",
+    "AUD/JPY","AUD/CHF","AUD/CAD","AUD/NZD",
     "CAD/JPY","CAD/CHF","CHF/JPY","NZD/JPY","NZD/CHF"
 ]
 
 TIMEFRAMES = {'1D': 'daily', '1h': '60min', '5m': '5min', '4h': '240min'}
-
 HKT = pytz.timezone('Asia/Hong_Kong')
 
-# ========================= ALL FUNCTIONS (100% your original) =========================
+# ========================= FUNCTIONS =========================
 def get_session(t):
     if t is None: return None
     t = t.time()
@@ -40,13 +39,13 @@ def get_session(t):
 
 def detect_prior_day_pattern(df):
     if len(df) < 3: return "Other"
-    today = df.iloc[-1]; y = df.iloc[-2]
-    if y['close'] < y['open'] and today['close'] > today['open'] and today['open'] < y['close'] and today['close'] > y['open']:
+    t = df.iloc[-1]; y = df.iloc[-2]
+    if y['close'] < y['open'] and t['close'] > t['open'] and t['open'] < y['close'] and t['close'] > y['open']:
         return "Bullish Engulfing"
-    if y['close'] > y['open'] and today['close'] < today['open'] and today['open'] > y['close'] and today['close'] < y['open']:
+    if y['close'] > y['open'] and t['close'] < t['open'] and t['open'] > y['close'] and t['close'] < y['open']:
         return "Bearish Engulfing"
-    if today['high'] > y['high'] and today['low'] > y['low']: return "Bullish HH/HL"
-    if today['high'] < y['high'] and today['low'] < y['low']: return "Bearish LH/LL"
+    if t['high'] > y['high'] and t['low'] > y['low']: return "Bullish HH/HL"
+    if t['high'] < y['high'] and t['low'] < y['low']: return "Bearish LH/LL"
     return "Other"
 
 def get_daily_trend(df):
@@ -79,7 +78,7 @@ def get_fvg(df):
     return ""
 
 # ========================= FETCH DATA =========================
-@st.cache_data(ttl=1800, show_spinner="Fetching live data for 27 pairs...")
+@st.cache_data(ttl=1800, show_spinner="Loading 27 pairs...")
 def fetch_all():
     all_data = {}
     for asset in ASSETS:
@@ -94,17 +93,16 @@ def fetch_all():
                 ts['time_ny'] = ts['datetime'].dt.time
                 ts['session'] = ts['time_ny'].apply(get_session)
                 data[tf] = ts
-            except: pass
+            except: continue
         if data: all_data[asset] = data
     return all_data
 
 data = fetch_all()
 
-# ========================= BUILD DASHBOARD =========================
-st.title("LONDON GOD TIER DASHBOARD")
-st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')} · Hong Kong")
-
+# ========================= BUILD TABLE =========================
 rows = []
+priority_order = ["EURUSD","GBPUSD","AUDUSD","NZDUSD","USDJPY","USDCAD","USDCHF"]
+
 for asset, tfs in data.items():
     if '1D' not in tfs or '5m' not in tfs: continue
     dfd = tfs['1D']; df5 = tfs['5m']; df4h = tfs.get('4h', pd.DataFrame())
@@ -150,7 +148,18 @@ for asset, tfs in data.items():
         "Last 3D": arrows,
     })
 
-df = pd.DataFrame(rows).sort_values("Asset", key=lambda x: x.map({a.replace("/",""):i for i,a in enumerate(ASSETS)}))
+df = pd.DataFrame(rows)
+
+# FIXED SORTING
+def sort_priority(x):
+    return x.map(lambda a: priority_order.index(a) if a in priority_order else 999)
+
+df["sort"] = df["Asset"].apply(sort_priority)
+df = df.sort_values("sort").drop("sort", axis=1)
+
+# ========================= DISPLAY =========================
+st.title("LONDON GOD TIER DASHBOARD")
+st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')}")
 
 def color(val):
     if "Bullish" in str(val): return "color: #00FF00; font-weight: bold"
