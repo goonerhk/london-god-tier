@@ -6,18 +6,18 @@ from twelvedata import TDClient
 
 st.set_page_config(page_title="LONDON GOD TIER", layout="wide")
 
-# ========================= SAFE API KEY =========================
+# ========================= API KEY =========================
 try:
     API_KEY = st.secrets["TWELVE_DATA_KEY"]
 except:
-    API_KEY = st.text_input("Enter Twelve Data API key", type="password")
+    API_KEY = st.text_input("Enter your Twelve Data API key", type="password")
     if not API_KEY:
-        st.error("API key required to load data")
+        st.error("API key required")
         st.stop()
 
 td = TDClient(apikey=API_KEY)
 
-# ========================= ASSETS =========================
+# ========================= ASSETS & CORRECT INTERVALS =========================
 ASSETS = [
     "EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","USD/CAD","NZD/USD",
     "EUR/GBP","EUR/JPY","EUR/CHF","EUR/AUD","EUR/CAD","EUR/NZD",
@@ -26,7 +26,13 @@ ASSETS = [
     "CAD/JPY","CAD/CHF","CHF/JPY","NZD/JPY","NZD/CHF"
 ]
 
-TIMEFRAMES = {'1D': 'daily', '1h': '60min', '5m': '5min', '4h': '240min'}
+TIMEFRAMES = {
+    '1D': '1day',
+    '1h': '60min',
+    '5m': '5min',
+    '4h': '240min'
+}
+
 HKT = pytz.timezone('Asia/Hong_Kong')
 
 # ========================= FUNCTIONS =========================
@@ -78,14 +84,19 @@ def get_fvg(df):
     return ""
 
 # ========================= FETCH DATA =========================
-@st.cache_data(ttl=1800, show_spinner="Fetching 27 pairs from Twelve Data...")
+@st.cache_data(ttl=1800, show_spinner="Loading 27 pairs...")
 def fetch_all():
     all_data = {}
     for asset in ASSETS:
         data = {}
         for tf, interval in TIMEFRAMES.items():
             try:
-                ts = td.time_series(symbol=asset, interval=interval, outputsize=200, timezone="America/New_York").as_pandas()
+                ts = td.time_series(
+                    symbol=asset,
+                    interval=interval,
+                    outputsize=300,
+                    timezone="America/New_York"
+                ).as_pandas()
                 ts = ts.reset_index()
                 ts.columns = ['datetime','open','high','low','close','volume']
                 ts['datetime'] = pd.to_datetime(ts['datetime'])
@@ -94,17 +105,13 @@ def fetch_all():
                 ts['session'] = ts['time_ny'].apply(get_session)
                 data[tf] = ts
             except Exception as e:
-                st.warning(f"{asset} {tf} failed")
-                continue
+                st.warning(f"{asset} {tf} failed: {e}")
         if data: all_data[asset] = data
     return all_data
 
 data = fetch_all()
 
-# ========================= BUILD DASHBOARD =========================
-st.title("LONDON GOD TIER DASHBOARD")
-st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')}")
-
+# ========================= BUILD TABLE =========================
 rows = []
 priority = ["EURUSD","GBPUSD","AUDUSD","NZDUSD","USDJPY","USDCAD","USDCHF"]
 
@@ -153,26 +160,28 @@ for asset, tfs in data.items():
         "Last 3D": arrows,
     })
 
-# FIXED: Only create DataFrame if rows exist
 if not rows:
-    st.error("No data loaded — check API key or internet")
+    st.error("No data — check API key")
     st.stop()
 
 df = pd.DataFrame(rows)
 
-# FIXED SORTING — 100% safe
-df["priority"] = df["Asset"].apply(lambda x: priority.index(x) if x in priority else 999)
-df = df.sort_values("priority").drop("priority", axis=1).reset_index(drop=True)
+# Fixed sorting
+df["sort"] = df["Asset"].map(lambda x: priority.index(x) if x in priority else 999)
+df = df.sort_values("sort").drop("sort", axis=1).reset_index(drop=True)
 
-# ========================= STYLING =========================
-def color_cell(val):
+# ========================= DISPLAY =========================
+st.title("LONDON GOD TIER DASHBOARD")
+st.caption(f"Live · {datetime.now(HKT).strftime('%Y-%m-%d %H:%M HKT')} · 27 Pairs")
+
+def color(val):
     if "Bullish" in str(val): return "color: #00FF00; font-weight: bold"
     if "Bearish" in str(val): return "color: #FF4444; font-weight: bold"
     if val == "Ideal": return "color: #00FF88; font-weight: bold"
     if "Delayed" in str(val): return "color: #FFAA00"
     return ""
 
-styled = df.style.map(color_cell)
-st.dataframe(styled, use_container_width=True, height=900)
+styled = df.style.map(color)
+st.dataframe(styled, use_container_width=True, height=1000)
 
-st.success("27 Pairs · Full London God Tier · Live · Hong Kong Time")
+st.success("Full Dashboard · CBDR · Asian · FVG · OB · Arrows · Live · Hong Kong")
