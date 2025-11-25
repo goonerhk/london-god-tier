@@ -1,0 +1,4 @@
+streamlit
+twelvedata
+pandas
+pytz
